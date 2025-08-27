@@ -1,17 +1,14 @@
 package processing
 
 import (
-	"bytes"
+	"flag"
 	"fmt"
-	"image"
-	"image/color"
-	"image/png"
-	"io"
-	"os"
-
 	"github.com/owulveryck/onnx-go"
 	"github.com/owulveryck/onnx-go/backend/x/gorgonnx"
 	"gorgonia.org/tensor"
+	"image"
+	"image/color"
+	"os"
 )
 
 // RemoveBackgroundOptions holds options for background removal.
@@ -25,33 +22,31 @@ type RemoveBackgroundOptions struct {
 	AlphaMattingErodeSize           int
 	BackgroundColor                 *color.Color
 	ReturnType                      string // "image", "bytes"
+	ModelPath                       string // Path to ONNX model
 }
 
 // RemoveBackground applies U2Net ONNX model to an image and returns RGBA with alpha mask.
-func RemoveBackground(img image.Image, opts RemoveBackgroundOptions) (interface{}, error) {
+func RemoveBackground(img image.Image, opts RemoveBackgroundOptions) (image.Image, error) {
 	// 1. Load ONNX model
-	modelPath := "u2net.onnx" // Update with actual path
-	f, err := os.Open(modelPath)
+	var modelPath = flag.String("model", "u2net.onnx", "path to the model file")
+	fmt.Println("Using model:", *modelPath)
+	// read the onnx model
+	b, err := os.ReadFile(*modelPath)
+	fmt.Printf("Model size: %d bytes\n", len(b))
 	if err != nil {
-		return nil, fmt.Errorf("failed to open model: %w", err)
+		return nil, fmt.Errorf("model read error: %w", err)
 	}
-	defer f.Close()
 
 	backend := gorgonnx.NewGraph()
 	model := onnx.NewModel(backend)
-	modelBytes, err := io.ReadAll(f)
+	err = model.UnmarshalBinary(b)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read model file: %w", err)
+		return nil, fmt.Errorf("Model unmarshal error: %w \n", err)
 	}
-	err = model.UnmarshalBinary(modelBytes)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load model: %w", err)
-	}
-
 	// 2. Preprocess image: resize to 320x320, normalize
 	inputTensor, err := preprocessImage(img)
 	if err != nil {
-		return nil, fmt.Errorf("preprocess error: %w", err)
+		return nil, fmt.Errorf("preprocess error: %w \n", err)
 	}
 
 	// 3. Run inference
@@ -76,47 +71,34 @@ func RemoveBackground(img image.Image, opts RemoveBackgroundOptions) (interface{
 
 	// 5. Post-process mask if requested
 	if opts.PostProcessMask {
-		maskImg = postProcessMaskGo(maskImg) // You need to implement postProcessMaskGo
+		maskImg = PostProcessMaskGo(maskImg)
 	}
 
 	var cutout image.Image
 	if opts.OnlyMask {
 		cutout = maskImg
 	} else if opts.AlphaMatting {
-		am, err := alphaMattingCutoutGo(img, maskImg, opts.AlphaMattingForegroundThreshold, opts.AlphaMattingBackgroundThreshold, opts.AlphaMattingErodeSize)
+		am, err := AlphaMattingCutoutGo(img, maskImg, opts.AlphaMattingForegroundThreshold, opts.AlphaMattingBackgroundThreshold, opts.AlphaMattingErodeSize)
 		if err != nil {
 			if opts.PutAlpha {
-				cutout = putAlphaCutoutGo(img, maskImg)
+				cutout = PutAlphaCutoutGo(img, maskImg)
 			} else {
-				cutout = naiveCutoutGo(img, maskImg)
+				cutout = NaiveCutoutGo(img, maskImg)
 			}
 		} else {
 			cutout = am
 		}
 	} else {
 		if opts.PutAlpha {
-			cutout = putAlphaCutoutGo(img, maskImg)
+			cutout = PutAlphaCutoutGo(img, maskImg)
 		} else {
-			cutout = naiveCutoutGo(img, maskImg)
+			cutout = NaiveCutoutGo(img, maskImg)
 		}
 	}
 
 	// Apply background color if requested and not only mask
 	if opts.BackgroundColor != nil && !opts.OnlyMask {
-		cutout = applyBackgroundColorGo(cutout, opts.BackgroundColor)
-	}
-
-	if opts.ReturnType == "image" {
-		return cutout, nil
-	}
-
-	if opts.ReturnType == "bytes" {
-		buf := new(bytes.Buffer)
-		err := png.Encode(buf, cutout)
-		if err != nil {
-			return nil, fmt.Errorf("png encode error: %w", err)
-		}
-		return buf.Bytes(), nil
+		cutout = ApplyBackgroundColorGo(cutout, opts.BackgroundColor)
 	}
 
 	return cutout, nil
@@ -192,54 +174,38 @@ func postprocessMask(t tensor.Tensor, width, height int) (image.Image, error) {
 	return imgResized, nil
 }
 
-// postProcessMaskGo can be a no-op or simple smoothing (identity for now)
-func postProcessMaskGo(mask image.Image) image.Image {
-	// No-op, just return mask
+// postProcessMaskGo is a no-op for now
+func PostProcessMaskGo(mask image.Image) image.Image {
 	return mask
 }
 
-// applyMaskToImage sets the mask as alpha channel on the original image.
-func applyMaskToImage(img image.Image, mask image.Image) *image.RGBA {
-	bounds := img.Bounds()
-	rgba := image.NewRGBA(bounds)
-	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
-		for x := bounds.Min.X; x < bounds.Max.X; x++ {
-			orig := color.NRGBAModel.Convert(img.At(x, y)).(color.NRGBA)
-			alpha := color.GrayModel.Convert(mask.At(x, y)).(color.Gray).Y
-			rgba.Set(x, y, color.NRGBA{R: orig.R, G: orig.G, B: orig.B, A: alpha})
-		}
-	}
-	return rgba
-}
-
-// Helper stubs for cutout and background color
-func alphaMattingCutoutGo(img image.Image, mask image.Image, fgThresh, bgThresh float32, erodeSize int) (image.Image, error) {
-	// TODO: Implement alpha matting cutout
+// alphaMattingCutoutGo is not implemented yet
+func AlphaMattingCutoutGo(img image.Image, mask image.Image, fgThresh, bgThresh float32, erodeSize int) (image.Image, error) {
 	return nil, fmt.Errorf("alphaMattingCutoutGo not implemented")
 }
 
-func putAlphaCutoutGo(img image.Image, mask image.Image) image.Image {
-	return applyMaskToImage(img, mask)
+// putAlphaCutoutGo applies the mask as alpha channel
+func PutAlphaCutoutGo(img image.Image, mask image.Image) image.Image {
+	return ApplyMask(img, mask)
 }
 
-func naiveCutoutGo(img image.Image, mask image.Image) image.Image {
-	return applyMaskToImage(img, mask)
+// naiveCutoutGo applies the mask as alpha channel (same as putAlphaCutoutGo for now)
+func NaiveCutoutGo(img image.Image, mask image.Image) image.Image {
+	return ApplyMask(img, mask)
 }
 
-func applyBackgroundColorGo(img image.Image, bgColor *color.Color) image.Image {
-	bounds := img.Bounds()
-	out := image.NewRGBA(bounds)
-
+// applyBackgroundColorGo composites the image over a solid background color
+func ApplyBackgroundColorGo(img image.Image, bgColor *color.Color) image.Image {
+	b := img.Bounds()
+	out := image.NewRGBA(b)
 	var bg color.NRGBA
 	if bgColor != nil {
-		// Convert *color.Color to color.NRGBA
 		bg = color.NRGBAModel.Convert(*bgColor).(color.NRGBA)
 	} else {
-		bg = color.NRGBA{R: 255, G: 255, B: 255, A: 255} // default white
+		bg = color.NRGBA{R: 255, G: 255, B: 255, A: 255}
 	}
-
-	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
-		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+	for y := b.Min.Y; y < b.Max.Y; y++ {
+		for x := b.Min.X; x < b.Max.X; x++ {
 			pix := color.NRGBAModel.Convert(img.At(x, y)).(color.NRGBA)
 			alpha := float64(pix.A) / 255.0
 			outR := uint8(float64(pix.R)*alpha + float64(bg.R)*(1-alpha))

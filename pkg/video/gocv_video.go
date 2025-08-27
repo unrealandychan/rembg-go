@@ -13,8 +13,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/eddiechan/rembg-golang/pkg/backends"
-	"github.com/eddiechan/rembg-golang/pkg/processing"
+	"github.com/unrealandychan/rembg-go/pkg/backends"
+	"github.com/unrealandychan/rembg-go/pkg/processing"
 )
 
 type frameTask struct {
@@ -89,8 +89,20 @@ func ExtractFramesGocv(videoPath, outDir string) error {
 		if err != nil {
 			return fmt.Errorf("convert mat to image: %w", err)
 		}
+		rmbgImg, err := processing.RemoveBackground(imgGo, processing.RemoveBackgroundOptions{
+			PostProcessMask: true,
+			OnlyMask:        false,
+			AlphaMatting:    false,
+			PutAlpha:        true,
+			BackgroundColor: nil,
+			ReturnType:      "image",
+			ModelPath:       "./u2net.onnx",
+		})
+		if err != nil {
+			return fmt.Errorf("remove background: %w\n", err)
+		}
 		outPath := filepath.Join(outDir, fmt.Sprintf("frame_%04d.png", idx))
-		tasks <- frameTask{img: imgGo, path: outPath}
+		tasks <- frameTask{img: rmbgImg, path: outPath}
 		idx++
 	}
 	close(tasks)

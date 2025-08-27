@@ -7,3 +7,4 @@ bin/
 *.dylib
 *.mp4
 *.png
+*.onnx
