@@ -1,0 +1,9 @@
+/.idea
+/.vscode
+bin/
+models/
+*.exe
+*.dll
+*.so
+*.dylib
+.mp4
